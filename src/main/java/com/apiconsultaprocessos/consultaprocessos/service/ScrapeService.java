@@ -15,11 +15,12 @@ import java.io.IOException;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 
 @Service
 public class ScrapeService {
 
-    public List<ProcessoResultado> scrapeWebsite(List<String> processArray, String uf) throws IOException {
+    public List<ProcessoResultado> scrapeWebsite(List<String> processArray, String uf) {
         ChromeOptions options = new ChromeOptions();
         options.addArguments("--start-maximized");
         WebDriver driver = new ChromeDriver(options);
@@ -28,6 +29,7 @@ public class ScrapeService {
     
         try {
             for (String processo : processArray) {
+                System.out.println("Consultando processo: " + processo);
                 driver.get("https://processual.trf1.jus.br/consultaProcessual/numeroProcessoOriginario.php?secao=TRF1");
     
                 WebDriverWait wait = new WebDriverWait(driver, Duration.ofSeconds(20));
@@ -38,50 +40,80 @@ public class ScrapeService {
                 campoProc.sendKeys(processo);
                 campoProc.sendKeys(Keys.ENTER);
     
-                try {
-                    wait.until(ExpectedConditions.visibilityOfElementLocated(By.className("error")));
-                    resultados.add(new ProcessoResultado(processo, "-", "Não encontrado", "-"));
-                } catch (TimeoutException e) {
-                    WebElement tabela = driver.findElement(By.cssSelector("div.span-19 table"));
-                    List<WebElement> linhas = tabela.findElements(By.tagName("tr"));
+                // Aguarda até que a tabela de resultados apareça
+                wait.until(ExpectedConditions.visibilityOfElementLocated(By.cssSelector("div.span-19 table")));
     
-                    for (WebElement linha : linhas) {
+                List<WebElement> linhas = driver.findElements(By.cssSelector("div.span-19 table tbody tr"));
+    
+                // Itera sobre todas as linhas e recarrega elementos dinamicamente
+                for (int i = 0; i < linhas.size(); i++) {
+                    linhas = driver.findElements(By.cssSelector("div.span-19 table tbody tr"));  // Recarregar elementos
+                    WebElement linha = linhas.get(i);  // Pega a linha atual
+    
+                    try {
                         WebElement link = linha.findElement(By.tagName("a"));
                         String textoLink = link.getText();
     
                         if (textoLink.contains("RPV") || textoLink.contains("PRC")) {
+                            System.out.println("Clicando no link: " + textoLink);
                             link.click();
-                            for (String handle : driver.getWindowHandles()) {
-                                driver.switchTo().window(handle);
+    
+                            // Captura a aba principal
+                            String abaPrincipal = driver.getWindowHandle();
+    
+                            // Espera pela nova aba e troca para ela
+                            Set<String> handles = driver.getWindowHandles();
+                            handles.remove(abaPrincipal);  // Remove a aba original
+    
+                            if (!handles.isEmpty()) {
+                                String novaAba = handles.iterator().next();
+                                driver.switchTo().window(novaAba);
+    
+                                // Aguarda que o conteúdo da nova aba seja carregado
+                                wait.until(ExpectedConditions.visibilityOfElementLocated(By.id("ui-id-4"))).click();
+    
+                                WebElement ultimaMovimentacaoElement = driver.findElement(
+                                        By.cssSelector("#aba-movimentacao table tbody tr td:nth-child(2)")
+                                );
+                                String ultimaMovimentacao = ultimaMovimentacaoElement.getText();
+    
+                                String status = switch (ultimaMovimentacao) {
+                                    case "40920" -> "OFÍCIO INFORMANDO TRANSFERÊNCIA AO TESOURO NACIONAL";
+                                    case "40910" -> "OFÍCIO INFORMANDO SAQUE DO VALOR";
+                                    case "40900" -> "OFÍCIO INFORMANDO VALOR DEPOSITADO";
+                                    case "40510" -> "VALOR DEPOSITADO";
+                                    default -> "AINDA NÃO HOUVE DEPÓSITO";
+                                };
+    
+                                String data = driver.findElement(
+                                        By.cssSelector("#aba-movimentacao table tbody tr td:nth-child(1)")
+                                ).getText();
+    
+                                resultados.add(new ProcessoResultado(processo, textoLink, status, data));
+                                System.out.println("Processo: " + processo + ", Status: " + status + ", Data: " + data);
+    
+                                // Fecha a aba atual e volta para a aba principal
+                                driver.close();
+                                driver.switchTo().window(abaPrincipal);
                             }
-    
-                            wait.until(ExpectedConditions.visibilityOfElementLocated(By.id("ui-id-4"))).click();
-                            WebElement ultimaMovimentacaoElement = driver.findElement(
-                                    By.cssSelector("#aba-movimentacao table tbody tr td:nth-child(2)"));
-                            String ultimaMovimentacao = ultimaMovimentacaoElement.getText();
-    
-                            String status = switch (ultimaMovimentacao) {
-                                case "40920" -> "OFÍCIO INFORMANDO TRANSFERÊNCIA DO(S) VALOR(ES) AO TESOURO NACIONAL";
-                                case "40910" -> "OFÍCIO INFORMANDO SAQUE(S) DO(S) VALOR(ES)";
-                                case "40900" -> "OFÍCIO INFORMANDO VALOR DEPOSITado";
-                                case "40510" -> "VALOR DEPOSITADO";
-                                default -> "AINDA NÃO HOUVE DEPÓSITO";
-                            };
-    
-                            String data = driver.findElement(
-                                    By.cssSelector("#aba-movimentacao table tbody tr td:nth-child(1)")).getText();
-                            resultados.add(new ProcessoResultado(processo, textoLink, status, data));
                         }
+                    } catch (NoSuchElementException | StaleElementReferenceException e) {
+                        System.out.println("Erro ao processar o link: " + e.getMessage());
+                        // Recarregar a página e continuar caso o elemento fique obsoleto
                     }
                 }
             }
         } finally {
-            driver.quit();
+            driver.quit();  // Garante que o navegador será fechado no final
         }
     
-        gerarRelatorioExcel(resultados, "relatorio_de_saida.xlsx");
         return resultados;
     }
+    
+     //   gerarRelatorioExcel(resultados, "relatorio_de_saida.xlsx");
+       // return resultados;
+   // }
+
     private void gerarRelatorioExcel(List<ProcessoResultado> dados, String fileName) throws IOException {
         Workbook workbook = new XSSFWorkbook();
         Sheet sheet = workbook.createSheet("Relatório");

@@ -35,7 +35,7 @@ public class ScrapeController {
             List<ProcessoResultado> resultados = scrapeService.scrapeWebsite(processos, uf);
             return ResponseEntity.ok(resultados);
 
-        } catch (IOException e) {
+        } catch (Exception e) {
             return ResponseEntity.status(500).body(null);
         }
     }
