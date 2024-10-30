@@ -11,7 +11,8 @@ import java.util.List;
 import java.util.Map;
 
 @RestController
-@RequestMapping("/api/scrape")
+@RequestMapping("/api")
+@CrossOrigin(origins = "*", allowedHeaders = "*")
 public class ScrapeController {
 
     private final ScrapeService scrapeService;
@@ -21,7 +22,7 @@ public class ScrapeController {
         this.scrapeService = scrapeService;
     }
 
-    @PostMapping
+    @PostMapping("/scrape")
     public ResponseEntity<List<ProcessoResultado>> iniciarScrape(@RequestBody Map<String, Object> request) {
         try {
             List<String> processos = (List<String>) request.get("processos");
